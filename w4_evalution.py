@@ -11,5 +11,5 @@ def get_error_rate(truth, prediction):
         print("truth and prediction should have the same length")
         exit()
 
-    return np.sum(truth == prediction) / len(truth)
+    return 1 - np.sum(truth == prediction) / len(truth)
 

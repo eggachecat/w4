@@ -4,19 +4,23 @@ import numpy as np
 from sklearn.model_selection import StratifiedKFold
 from scipy import sparse
 from scipy.sparse import coo_matrix
+import pandas as pd
 
 import time
 import datetime
 import json
 import os
 
-NUMB_OF_FEATURES = 136
-NUMB_OF_ADV = 623
-NUMB_OF_TEST = 4859648
+NUM_OF_FEATURES = 136
+NUM_OF_ADV = 623
+NUM_OF_TEST = 4859648
 
-TABULAR_ROOT_PATH = "data/tabular"
-TABULAR_TS_ROOT_PATH = "data/tabular_ts"
+TABULAR_ROOT_PATH = "data/tabular_ts"
+TABULAR_LD_ROOT_PATH = "data/tabular_low_dim"
+
 ORIGIN_ROOT_PATH = "data/database"
+ORIGIN_LD_ROOT_PATH = "data/database_low_dim"
+
 CACHE_ROOT_PATH = "data/cache"
 
 
@@ -34,11 +38,21 @@ def get_origin_data_path():
     return train_file_paths, test_file_paths
 
 
-def get_tabular_data_path():
-    pass
+def get_low_dim_origin_data_path():
+    train_file_paths = []
+    for suffix in range(0, 8):
+        train_file_paths.append("{org}/train_full_{id}".format(org=ORIGIN_LD_ROOT_PATH, id=suffix))
+    for suffix in range(8, 15):
+        train_file_paths.append("{org}/train_half_{id}".format(org=ORIGIN_LD_ROOT_PATH, id=suffix))
+
+    test_file_paths = []
+    for suffix in range(8, 15):
+        test_file_paths.append("{org}/test_half_{id}".format(org=ORIGIN_LD_ROOT_PATH, id=suffix))
+
+    return train_file_paths, test_file_paths
 
 
-def timestamp_to_data(timestamp):
+def timestamp_to_hour(timestamp):
     hour, minute = tuple(datetime.datetime.fromtimestamp(int(timestamp)).strftime('%H:%M').split(":"))
     return int(hour), int(minute)
 
@@ -62,14 +76,7 @@ def parse_test_data(line):
     return timestamp, adv_id, feature
 
 
-def read_origin_train_data_ts(file_path_arr):
-    """
-
-    :param file_path_arr: [string-arr] or string
-    :return adv_id_arr: 
-            click_truth_arr
-            features_arr
-    """
+def read_data(file_path_arr, is_train_format=True, verbose=False):
     adv_id_arr = []
     ts_arr = []
     click_truth_arr = []
@@ -79,49 +86,44 @@ def read_origin_train_data_ts(file_path_arr):
         file_path_arr = [file_path_arr]
 
     for file_path in file_path_arr:
+        if verbose:
+            print("Start loading", file_path)
         with open(file_path, "r") as f:
             for line in f:
-                timestamp, adv_id, click, feature = parse_train_data(line)
+                if is_train_format:
+                    timestamp, adv_id, click, feature = parse_train_data(line)
+                    click_truth_arr.append(click)
+                else:
+                    timestamp, adv_id, feature = parse_test_data(line)
                 ts_arr.append(timestamp)
                 adv_id_arr.append(adv_id)
-                click_truth_arr.append(click)
                 features_arr.append(feature)
 
-    return adv_id_arr, click_truth_arr, ts_arr, features_arr
+    if is_train_format:
+        return adv_id_arr, click_truth_arr, ts_arr, features_arr
+    else:
+        return adv_id_arr, ts_arr, features_arr
 
 
-def read_origin_test_data(file_path_arr):
-    """
-
-    :param file_path_arr: [string-arr] or string
-    :return adv_id_arr: 
-            features_arr:
-    """
-    adv_id_arr = []
-    features_arr = []
-    ts_arr = []
-
+def read_origin_train_data(file_path_arr):
     if not isinstance(file_path_arr, list):
         file_path_arr = [file_path_arr]
 
-    for file_path in file_path_arr:
-        print(file_path)
-        with open(file_path, "r") as f:
-            for line in f:
-                components = str.split(line.rstrip(), " ")
-                ts_arr.append(int(components[0]))
-                adv_id_arr.append(components[1])
-                features_arr.append([-1 + int(f) for f in components[3:]])
-
-    return adv_id_arr, ts_arr, features_arr
+    return read_data(file_path_arr)
 
 
-def convert_origin_to_tabular_ts(train_file_paths=None):
+def read_origin_test_data(file_path_arr):
+    if not isinstance(file_path_arr, list):
+        file_path_arr = [file_path_arr]
+
+    return read_data(file_path_arr, is_train_format=False)
+
+
+def convert_origin_train_to_tabular(get_path_func=get_origin_data_path):
     fp = open("{org}/adv_id_in_test_data.json".format(org=CACHE_ROOT_PATH), "r")
     adv_in_test = json.loads(fp.read())
 
-    if train_file_paths is None:
-        train_file_paths, predict_file_paths = get_origin_data_path()
+    train_file_paths, predict_file_paths = get_path_func()
 
     for train_file in train_file_paths:
         adv_recorder = dict()
@@ -129,7 +131,7 @@ def convert_origin_to_tabular_ts(train_file_paths=None):
             adv_recorder[adv_id] = []
 
         print("Start parsing data file {filename}".format(filename=train_file))
-        adv_id_arr, click_truth_arr, ts_arr, features_arr = read_origin_train_data_ts([train_file])
+        adv_id_arr, click_truth_arr, ts_arr, features_arr = read_origin_train_data([train_file])
         n_data = len(click_truth_arr)
         for i in range(n_data):
             adv_id = adv_id_arr[i]
@@ -139,12 +141,50 @@ def convert_origin_to_tabular_ts(train_file_paths=None):
                 adv_recorder[adv_id].append(record)
 
         for adv_id in adv_in_test:
-            with open("{r}/{f}.txt".format(r=TABULAR_TS_ROOT_PATH, f=adv_id), "a+") as fp:
+            with open("{r}/{f}.txt".format(r=TABULAR_LD_ROOT_PATH, f=adv_id), "a+") as fp:
                 for record in adv_recorder[adv_id]:
                     fp.write(record + "\n")
 
 
-def convert_origin_predict_to_tabular_ts():
+def convert_origin_train_to_low_dim(group_map):
+    """
+    Just make sure it matches the original type
+    :param group_map: 
+    :return: 
+    """
+    train_file_paths, test_file_paths = get_origin_data_path()
+
+    for train_file in train_file_paths:
+        print(train_file)
+        adv_id_arr, click_truth_arr, ts_arr, features_arr = read_data(train_file, is_train_format=True)
+
+        file_name = train_file.split("/")[-1]
+
+        n_data = len(features_arr)
+        for i in range(n_data):
+            features_arr[i] = list(set([str(1 + int(group_map[f])) for f in features_arr[i]]))
+
+        with open("data/database_low_dim/{f}".format(f=file_name), "w") as fp:
+            for i in range(n_data):
+                fp.write("{ts} {id} {c} |user {f}\n".format(ts=ts_arr[i], id=adv_id_arr[i], c=click_truth_arr[i],
+                                                            f=" ".join(features_arr[i])))
+
+    for test_file in test_file_paths:
+        print(test_file)
+
+        adv_id_arr, ts_arr, features_arr = read_data(test_file, is_train_format=False)
+        file_name = test_file.split("/")[-1]
+
+        n_data = len(features_arr)
+        for i in range(n_data):
+            features_arr[i] = list(set([str(1 + int(group_map[f])) for f in features_arr[i]]))
+
+        with open("data/database_low_dim/{f}".format(f=file_name), "w") as fp:
+            for i in range(n_data):
+                fp.write("{ts} {id} |user {f}\n".format(ts=ts_arr[i], id=adv_id_arr[i], f=" ".join(features_arr[i])))
+
+
+def convert_origin_test_to_json():
     cache_path = "data/cache/test_data_group_by_adv.json"
     store_obj = dict()
 
@@ -181,40 +221,18 @@ def convert_origin_predict_to_tabular_ts():
             os.mkdir(root_path)
         with open("{rp}/test.txt".format(rp=root_path), 'w') as fp:
             for record in store_obj[adv_id]:
-                fp.write("{l} {t} {u} \n".format(l=record["l"], t=timestamp_to_data(record["t"])[0], u=record["u"]))
+                fp.write("{l} {t} {u} \n".format(l=record["l"], t=timestamp_to_hour(record["t"])[0], u=record["u"]))
 
 
-# convert_origin_predict_to_tabular_ts()
+def convert_to_sparse(features_arr):
+    row = [i for i in range(len(features_arr)) for _ in range(len(features_arr[i]))]
+    col = [item for sublist in features_arr for item in sublist]
+    data = np.ones(len(row), dtype=int)
+
+    return coo_matrix((data, (row, col)), shape=(len(features_arr), NUM_OF_FEATURES)).tocsr()
 
 
-def read_origin_train_data(file_path_arr):
-    """
-    
-    :param file_path_arr: [string-arr] or string
-    :return adv_id_arr: 
-            click_truth_arr
-            features_arr
-    """
-    adv_id_arr = []
-    click_truth_arr = []
-    features_arr = []
-
-    if not isinstance(file_path_arr, list):
-        file_path_arr = [file_path_arr]
-
-    for file_path in file_path_arr:
-        with open(file_path, "r") as f:
-            for line in f:
-                components = str.split(line.rstrip(), " ")
-
-                adv_id_arr.append(components[1])
-                click_truth_arr.append(int(components[2]))
-                features_arr.append([-1 + int(f) for f in components[4:]])
-
-    return adv_id_arr, click_truth_arr, features_arr
-
-
-def read_tabular_ts_by_adv_id(adv_id, feature_filter=None, preserve=False, with_ts=False):
+def read_train_tabular(adv_id, feature_filter=None, preserve=False, with_ts=False, low_dim=False):
     """
     
     :param adv_id: 
@@ -228,8 +246,10 @@ def read_tabular_ts_by_adv_id(adv_id, feature_filter=None, preserve=False, with_
     click_truth_arr = []
     features_arr = []
     ts_arr = []
-
-    file_path = "{r}/{f}.txt".format(r=TABULAR_TS_ROOT_PATH, f=adv_id)
+    if low_dim:
+        file_path = "{r}/{f}.txt".format(r=TABULAR_LD_ROOT_PATH, f=adv_id)
+    else:
+        file_path = "{r}/{f}.txt".format(r=TABULAR_ROOT_PATH, f=adv_id)
     with open(file_path, "r") as f:
         for line in f:
             components = str.split(line.rstrip(), " ", 2)
@@ -249,58 +269,18 @@ def read_tabular_ts_by_adv_id(adv_id, feature_filter=None, preserve=False, with_
     y = click_truth_arr
 
     # convert features_arr to sparse matrix
-    row = [i for i in range(len(features_arr)) for _ in range(len(features_arr[i]))]
-    col = [item for sublist in features_arr for item in sublist]
-    data = np.ones(len(row), dtype=int)
-    X = coo_matrix((data, (row, col)), shape=(len(click_truth_arr), NUMB_OF_FEATURES))
+    # row = [i for i in range(len(features_arr)) for _ in range(len(features_arr[i]))]
+    # col = [item for sublist in features_arr for item in sublist]
+    # data = np.ones(len(row), dtype=int)
+    # X = coo_matrix((data, (row, col)), shape=(len(click_truth_arr), NUM_OF_FEATURES))
+
+    X = convert_to_sparse(features_arr)
 
     if with_ts:
-        day_trend = [timestamp_to_data(t) for t in ts_arr]
-        return X.tocsr(), np.array(y), day_trend
+        day_trend = [timestamp_to_hour(t) for t in ts_arr]
+        return X, np.array(y), day_trend
     else:
-        return X.tocsr(), np.array(y)
-
-
-def read_tabular_by_adv_id(adv_id, filter=False):
-    """
-    
-    :param file_path_arr: 
-    :param adv_id: 
-    :return: 
-    """
-    click_truth_arr = []
-    features_arr = []
-
-    file_path = "{r}/{f}.txt".format(r=TABULAR_ROOT_PATH, f=adv_id)
-    with open(file_path, "r") as f:
-        for line in f:
-
-            components = str.split(line.rstrip(), " ", 1)
-            if filter:
-                if eval(components[1]) == [0]:
-                    continue
-            click_truth_arr.append(int(components[0]))
-            features_arr.append(eval(components[1]))
-
-    y = click_truth_arr
-
-    # convert features_arr to sparse matrix
-    row = [i for i in range(len(features_arr)) for _ in range(len(features_arr[i]))]
-    col = [item for sublist in features_arr for item in sublist]
-    data = np.ones(len(row), dtype=int)
-    X = coo_matrix((data, (row, col)), shape=(len(click_truth_arr), NUMB_OF_FEATURES))
-
-    # More readable
-    # row = []
-    # col = []
-    # for i in range(len(features_arr)):
-    #     for x in features_arr[i]:
-    #         row.append(i)
-    #         col.append(x)
-    # data = np.ones(len(row), dtype=float)
-    # X = coo_matrix((data, (row, col)), shape=(len(click_truth_arr), NUMB_OF_FEATURES))
-
-    return X.tocsr(), np.array(y)
+        return X, np.array(y)
 
 
 def spilt_data(X, y, n_splits=3):
@@ -313,39 +293,13 @@ def spilt_data(X, y, n_splits=3):
 def save_to_stack():
     pass
 
-# start = time.time()
-# end = time.time()
-# print(end - start)
 
-#
-# X = [[2], [2, 3], [1]]
-# n_row = 50000
-# n_col = 100
-# X = [np.random.choice(n_col,  np.random.random_integers(n_col), replace=False) for _ in range(n_row)]
-#
-# start = time.time()
-# row = [i for i in range(len(X)) for _ in range(len(X[i]))]
-# col = [item for sublist in X for item in sublist]
-# data = np.ones(len(row), dtype=int)
-# m = coo_matrix((data, (row, col)), shape=(n_row, n_col))
-# end = time.time()
-# print(end-start)
-#
-# start = time.time()
-#
-# row = []
-# col = []
-# for i in range(len(X)):
-#     for x in X[i]:
-#         row.append(i)
-#         col.append(x)
-# data = np.ones(len(row), dtype=int)
-# m = coo_matrix((data, (row, col)), shape=(n_row, n_col))
-# end = time.time()
-# print(end-start)
-# features_arr = [[2], [2, 3], [0]]
-# y = [0, 0, 1]
-#
-
-# X, y = read_tabular_by_adv_id(TABULAR_ROOT_PATH + "id-579985.txt")
-# spilt_data(X, y)
+if __name__ == "__main__":
+    # map_str = "9 2 2 2 2 2 2 2 2 2 2 2 3 3 1 1 0 2 0 2 0 0 0 \
+    # 0 0 0 0 2 0 0 0 0 9 9 0 0 2 8 0 8 9 0 8 7 0 9 2 0 9 2 2 9 0 \
+    # 2 0 9 0 2 9 7 0 6 9 0 2 4 2 8 9 6 0 1 6 0 6 5 6 6 4 8 9 8 9 9 1 \
+    # 6 6 6 6 5 6 6 8 6 9 9 9 5 5 9 6 6 9 4 3 6 6 6 9 8 5 6 6 6 6 6 6 " \
+    #           "6 5 5 5 6 6 5 5 9 2 6 9 5 9 5 6 9 1 8"
+    # group = np.fromstring(map_str, dtype=int, sep=' ')
+    # convert_origin_train_to_low_dim(group)
+    convert_origin_train_to_tabular(get_low_dim_origin_data_path)

@@ -11,8 +11,8 @@ def time_to_hour(t):
     return (hour) % 24
 
 
-def get_click_rate_time_series(adv_id):
-    X, y, ts = w4_data_processing.read_tabular_ts_by_adv_id(adv_id, feature_filter=[0], preserve=True, with_ts=True)
+def get_click_rate_time_series(adv_id, preserve_guest=True):
+    X, y, ts = w4_data_processing.read_train_tabular(adv_id, feature_filter=[0], preserve=preserve_guest, with_ts=True)
 
     time_freq_recorder = dict()
 
@@ -55,17 +55,23 @@ def plot_guest_data(adv_id_arr):
     n_data = len(adv_id_arr)
 
     for i in range(n_data):
-        adv_id = adv_id_arr[i]
-        recorder = get_click_rate_time_series(adv_id)
-        r_ctr = [recorder[i]["r"] for i in range(0, 24)]
-        color = canvas.get_color(i)
-        canvas.draw_line_chart_2d(range(0, 24), r_ctr, need_xticks=True, color=color, label=adv_id)
+        for is_guest in [True, False]:
+            adv_id = adv_id_arr[i]
+            recorder = get_click_rate_time_series(adv_id, is_guest)
+            r_ctr = [100 * recorder[i]["r"] for i in range(0, 24)]
+            color = canvas.get_color(i)
+            label = "{id}_{suf}".format(id=adv_id, suf="guest" if is_guest else "logger")
+            style = "dashed" if is_guest else "solid"
+            canvas.draw_line_chart_2d(range(0, 24), r_ctr, need_xticks=True, color=color, label=label, line_style=style)
 
     canvas.set_legend()
 
-    canvas.set_title("Click-rate time series")
+    canvas.set_title("CTR time series")
     canvas.set_x_label("time in one day (hour)")
-    canvas.set_y_label("click-rate (%)")
+    canvas.set_y_label("CTR (%)")
 
     canvas.froze()
 
+
+if __name__ == "__main__":
+    plot_guest_data(["id-576772", "id-599117", "id-605854"])
