@@ -32,9 +32,14 @@ def naive_count(low_dim=False):
         if adv_id not in clicks:
             clicks[adv_id] = dict()
             selections[adv_id] = dict()
-            for k in range(w4_data_processing.NUM_OF_FEATURES):
-                clicks[adv_id][k] = 0
-                selections[adv_id][k] = 1
+            if low_dim:
+                for k in range(w4_data_processing.NUM_OF_LD_FEATURES):
+                    clicks[adv_id][k] = 0
+                    selections[adv_id][k] = 1
+            else:
+                for k in range(w4_data_processing.NUM_OF_FEATURES):
+                    clicks[adv_id][k] = 0
+                    selections[adv_id][k] = 1
         for f in features_arr[i]:
             clicks[adv_id][f] += click_truth
             selections[adv_id][f] += 1
@@ -67,16 +72,14 @@ def get_fea_prob(clicks, selections):
 #     return list(score.nlargest(n_top).index)
 
 
-def naive_decide(prob_mat, fea_prob, adv_prob, user_feature, adv_id):
+def naive_decide(prob_mat, fea_prob, adv_prob, user_feature, adv_id, n_top=10):
     user_feature = list(map(str, user_feature))
-    s = pandas.DataFrame.sum(prob_mat.loc[:][user_feature] * fea_prob[user_feature]) / adv_prob[adv_id]
-    print(s)
+    # print(prob_mat)
+    s = pandas.DataFrame.sum(prob_mat[user_feature] * fea_prob[user_feature], axis=1)
+    top_choice = list(s.sort_values(ascending=False).head(n_top).index)
+    print(adv_id, top_choice, adv_id in top_choice)
 
-    exit()
-
-    s = float(s)
-
-    return s
+    return int(adv_id in top_choice)
 
 
 def naive_prob(prob_mat, fea_prob, adv_prob, user_feature, adv_id):
@@ -181,33 +184,34 @@ def naive_predict(prob=True, low_dim=False):
         train_paths, test_paths = w4_data_processing.get_low_dim_origin_data_path()
     else:
         train_paths, test_paths = w4_data_processing.get_origin_data_path()
-    adv_id_arr, ts_arr, features_arr = w4_data_processing.read_data(test_paths[0], is_train_format=False, verbose=True)
+    adv_id_arr, ts_arr, features_arr = w4_data_processing.read_data(test_paths, is_train_format=False, verbose=True)
 
     n_data = len(ts_arr)
     one_ctr = 0
 
     with open("outputs/naive/t1_app_3.csv", "w") as fp:
         for i in range(n_data):
+            if i == 100:
+                exit()
             if i % 48500 == 0 and i > 0:
                 print("{p} done one_ctr={o}".format(p=i / 48500, o=one_ctr))
 
-            if features_arr[i] == [9]:
-                s = 0.03576
-            else:
-                if prob:
-                    s = naive_prob(prob_mat, fea_prob, adv_prob, features_arr[i], adv_id_arr[i])
+            if prob:
+                if features_arr[i] == [9]:
+                    s = 0.03576
                 else:
-                    s = naive_decide(prob_mat, fea_prob, adv_prob, features_arr[i], adv_id_arr[i])
-                if s > 1:
-                    s = 0.9
-                    one_ctr += 1
-            fp.write("{:.5f}\n".format(s))
+                    s = naive_prob(prob_mat, fea_prob, adv_prob, features_arr[i], adv_id_arr[i])
+                fp.write("{:.5f}\n".format(s))
+            else:
+                c = naive_decide(prob_mat, fea_prob, adv_prob, features_arr[i], adv_id_arr[i])
+                fp.write("{c}\n".format(c=c))
 
 
 if __name__ == "__main__":
+    pass
     # naive_count(True)
     # naive_count()
     # naive_predict_parallel()
-    naive_predict(prob=False, low_dim=True)
+    # naive_predict(prob=False, low_dim=True)
     # naive_counter()
     # naive_count()

@@ -14,6 +14,7 @@ import os
 NUM_OF_FEATURES = 136
 NUM_OF_ADV = 623
 NUM_OF_TEST = 4859648
+NUM_OF_LD_FEATURES = 10
 
 TABULAR_ROOT_PATH = "data/tabular_ts"
 TABULAR_LD_ROOT_PATH = "data/tabular_low_dim"
@@ -119,19 +120,19 @@ def read_origin_test_data(file_path_arr):
     return read_data(file_path_arr, is_train_format=False)
 
 
-def convert_origin_train_to_tabular(get_path_func=get_origin_data_path):
+def convert_origin_train_to_tabular(get_path_func=get_origin_data_path, root_path=TABULAR_ROOT_PATH):
     fp = open("{org}/adv_id_in_test_data.json".format(org=CACHE_ROOT_PATH), "r")
     adv_in_test = json.loads(fp.read())
 
     train_file_paths, predict_file_paths = get_path_func()
 
-    for train_file in train_file_paths:
+    for file_path in train_file_paths:
         adv_recorder = dict()
         for adv_id in adv_in_test:
             adv_recorder[adv_id] = []
 
-        print("Start parsing data file {filename}".format(filename=train_file))
-        adv_id_arr, click_truth_arr, ts_arr, features_arr = read_origin_train_data([train_file])
+        print("Start parsing data file {filename}".format(filename=file_path))
+        adv_id_arr, click_truth_arr, ts_arr, features_arr = read_origin_train_data([file_path])
         n_data = len(click_truth_arr)
         for i in range(n_data):
             adv_id = adv_id_arr[i]
@@ -141,7 +142,14 @@ def convert_origin_train_to_tabular(get_path_func=get_origin_data_path):
                 adv_recorder[adv_id].append(record)
 
         for adv_id in adv_in_test:
-            with open("{r}/{f}.txt".format(r=TABULAR_LD_ROOT_PATH, f=adv_id), "a+") as fp:
+
+            filename = "{r}/{f}.txt".format(r=root_path, f=adv_id)
+            if os.path.exists(filename):
+                append_write = 'a'  # append if already exists
+            else:
+                append_write = 'w'  # make a new file if not
+
+            with open(filename, append_write) as fp:
                 for record in adv_recorder[adv_id]:
                     fp.write(record + "\n")
 
@@ -164,7 +172,7 @@ def convert_origin_train_to_low_dim(group_map):
         for i in range(n_data):
             features_arr[i] = list(set([str(1 + int(group_map[f])) for f in features_arr[i]]))
 
-        with open("data/database_low_dim/{f}".format(f=file_name), "w") as fp:
+        with open("data/{rp}/{f}".format(rp=ORIGIN_LD_ROOT_PATH, f=file_name), "w") as fp:
             for i in range(n_data):
                 fp.write("{ts} {id} {c} |user {f}\n".format(ts=ts_arr[i], id=adv_id_arr[i], c=click_truth_arr[i],
                                                             f=" ".join(features_arr[i])))
@@ -179,13 +187,13 @@ def convert_origin_train_to_low_dim(group_map):
         for i in range(n_data):
             features_arr[i] = list(set([str(1 + int(group_map[f])) for f in features_arr[i]]))
 
-        with open("data/database_low_dim/{f}".format(f=file_name), "w") as fp:
+        with open("data/{rp}/{f}".format(rp=ORIGIN_LD_ROOT_PATH, f=file_name), "w") as fp:
             for i in range(n_data):
                 fp.write("{ts} {id} |user {f}\n".format(ts=ts_arr[i], id=adv_id_arr[i], f=" ".join(features_arr[i])))
 
 
-def convert_origin_test_to_json():
-    cache_path = "data/cache/test_data_group_by_adv.json"
+def convert_origin_test_to_json(cache_path="data/cache/test_data_group_by_adv.json", root_path="data/tabular_ts_test",
+                                low_dim=False, test_file_paths=None):
     store_obj = dict()
 
     if os.path.isfile(cache_path):
@@ -198,7 +206,11 @@ def convert_origin_test_to_json():
         print("done {t}s".format(t=end - start))
 
     else:
-        train_file_paths, test_file_paths = get_origin_data_path()
+        if test_file_paths is None:
+            if not low_dim:
+                train_file_paths, test_file_paths = get_origin_data_path()
+            else:
+                train_file_paths, test_file_paths = get_low_dim_origin_data_path()
         print("start...")
         adv_id_arr, ts_arr, features_arr = read_origin_test_data(test_file_paths)
 
@@ -216,12 +228,12 @@ def convert_origin_test_to_json():
             json.dump(store_obj, fp)
 
     for adv_id in store_obj:
-        root_path = "data/tabular_ts_predict/{id}".format(id=adv_id)
         if not os.path.exists(root_path):
             os.mkdir(root_path)
-        with open("{rp}/test.txt".format(rp=root_path), 'w') as fp:
+        with open("{rp}/{id}.txt".format(rp=root_path, id=adv_id), 'w') as fp:
             for record in store_obj[adv_id]:
-                fp.write("{l} {t} {u} \n".format(l=record["l"], t=timestamp_to_hour(record["t"])[0], u=record["u"]))
+                fp.write("{l} {t} {u} \n".format(l=record["l"], t=record["t"]
+                                                 , u=record["u"]))
 
 
 def convert_to_sparse(features_arr):
@@ -232,7 +244,8 @@ def convert_to_sparse(features_arr):
     return coo_matrix((data, (row, col)), shape=(len(features_arr), NUM_OF_FEATURES)).tocsr()
 
 
-def read_train_tabular(adv_id, feature_filter=None, preserve=False, with_ts=False, low_dim=False):
+def read_train_tabular(adv_id, feature_filter=None, preserve=False, with_ts=False, low_dim=False, w=False,
+                       group_map=None, is_train=True):
     """
     
     :param adv_id: 
@@ -246,10 +259,22 @@ def read_train_tabular(adv_id, feature_filter=None, preserve=False, with_ts=Fals
     click_truth_arr = []
     features_arr = []
     ts_arr = []
-    if low_dim:
-        file_path = "{r}/{f}.txt".format(r=TABULAR_LD_ROOT_PATH, f=adv_id)
+
+    if is_train:
+        if low_dim:
+            if w:
+                file_path = "{r}/{f}.txt".format(r="data/www_tabular_ld", f=adv_id)
+            else:
+                file_path = "{r}/{f}.txt".format(r=TABULAR_LD_ROOT_PATH, f=adv_id)
+        else:
+            if w:
+                file_path = "{r}/{f}.txt".format(r="data/www_tabular", f=adv_id)
+            else:
+                file_path = "{r}/{f}.txt".format(r=TABULAR_ROOT_PATH, f=adv_id)
     else:
-        file_path = "{r}/{f}.txt".format(r=TABULAR_ROOT_PATH, f=adv_id)
+        file_path = "data/tabular_ts_test/{f}.txt".format(f=adv_id)
+
+    # print(file_path)
     with open(file_path, "r") as f:
         for line in f:
             components = str.split(line.rstrip(), " ", 2)
@@ -262,7 +287,12 @@ def read_train_tabular(adv_id, feature_filter=None, preserve=False, with_ts=Fals
                     continue
 
             click_truth_arr.append(int(components[0]))
-            features_arr.append(eval(components[2]))
+            if group_map is None:
+                features_arr.append(eval(components[2]))
+            else:
+                feature = list(set([group_map[f] for f in eval(components[2])]))
+
+                features_arr.append(feature)
             if with_ts:
                 ts_arr.append(int(components[1]))
 
@@ -273,7 +303,7 @@ def read_train_tabular(adv_id, feature_filter=None, preserve=False, with_ts=Fals
     # col = [item for sublist in features_arr for item in sublist]
     # data = np.ones(len(row), dtype=int)
     # X = coo_matrix((data, (row, col)), shape=(len(click_truth_arr), NUM_OF_FEATURES))
-
+    # print(features_arr)
     X = convert_to_sparse(features_arr)
 
     if with_ts:
@@ -294,12 +324,83 @@ def save_to_stack():
     pass
 
 
+def parse_data_w(line):
+    components = str.split(line.rstrip(), " ", maxsplit=4)
+    timestamp = components[0]
+    adv_id = components[1]
+    click = int(components[2])
+    feature = str.split(components[4], "|", maxsplit=2)[0]
+    feature = str.split(feature.rstrip(), " ")
+    feature = [-1 + int(x) for x in feature]
+
+    return timestamp, adv_id, click, feature
+
+
+def read_data_w(file_path):
+    adv_id_arr = []
+    ts_arr = []
+    click_truth_arr = []
+    features_arr = []
+
+    with open(file_path, "r") as f:
+        for line in f:
+            timestamp, adv_id, click, feature = parse_data_w(line)
+            click_truth_arr.append(click)
+            ts_arr.append(timestamp)
+            adv_id_arr.append(adv_id)
+            features_arr.append(feature)
+
+    return adv_id_arr, click_truth_arr, ts_arr, features_arr
+
+
+def get_path_w():
+    return ["data/www_database/ans_{i}.csv".format(i=x) for x in range(8, 15)], []
+
+
+def convert_origin_train_to_low_dim_w(group_map):
+    """
+    Just make sure it matches the original type
+    :param group_map: 
+    :return: 
+    """
+
+    test_file_paths = ["data/www/w{i}".format(i=x) for x in range(7)]
+
+    for test_file in test_file_paths:
+        print(test_file)
+
+        adv_id_arr, click_truth_arr, ts_arr, features_arr = read_data_w(test_file)
+        file_name = test_file.split("/")[-1]
+
+        n_data = len(features_arr)
+        for i in range(n_data):
+            features_arr[i] = list(set([str(1 + int(group_map[f])) for f in features_arr[i]]))
+
+        with open("data/{rp}/{f}".format(rp="www_low_dim", f=file_name), "w") as fp:
+            for i in range(n_data):
+                fp.write("{ts} {id} {c} |user {f}\n".format(ts=ts_arr[i], id=adv_id_arr[i], c=click_truth_arr[i],
+                                                            f=" ".join(features_arr[i])))
+
+
+def pd_parse(x):
+    return parse_train_data(x[0])
+
+
 if __name__ == "__main__":
+    convert_origin_train_to_tabular(get_path_w, root_path="data/www_tabular")
+
+    # df = pd.read_csv("data/database/train_full_0", header=None, dtype="str")
+    #
+    # df.apply(pd_parse, axis=1)
+    # pass
+    # convert_origin_train_to_tabular(get_path_w, "data/www_tabular_ld")
+    # pass
     # map_str = "9 2 2 2 2 2 2 2 2 2 2 2 3 3 1 1 0 2 0 2 0 0 0 \
     # 0 0 0 0 2 0 0 0 0 9 9 0 0 2 8 0 8 9 0 8 7 0 9 2 0 9 2 2 9 0 \
     # 2 0 9 0 2 9 7 0 6 9 0 2 4 2 8 9 6 0 1 6 0 6 5 6 6 4 8 9 8 9 9 1 \
     # 6 6 6 6 5 6 6 8 6 9 9 9 5 5 9 6 6 9 4 3 6 6 6 9 8 5 6 6 6 6 6 6 " \
     #           "6 5 5 5 6 6 5 5 9 2 6 9 5 9 5 6 9 1 8"
     # group = np.fromstring(map_str, dtype=int, sep=' ')
-    # convert_origin_train_to_low_dim(group)
-    convert_origin_train_to_tabular(get_low_dim_origin_data_path)
+    # convert_origin_train_to_low_dim_w(group)
+    # # convert_origin_train_to_tabular(get_low_dim_origin_data_path)
+    # convert_origin_test_to_json(low_dim=True, cache_path="data/cache/test_data_group_by_adv_ld.json")

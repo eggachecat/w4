@@ -10,6 +10,14 @@ from sklearn.metrics import classification_report
 from sklearn.ensemble import GradientBoostingClassifier
 
 
+class W4LogisticRegression(sk_lin.LogisticRegression):
+    def predict(self, X):
+        return super(W4LogisticRegression, self).predict_log_proba(X)
+
+    def _get_param_names(self):
+        return super(W4LogisticRegression, self)._get_param_names()
+
+
 class W4LogReg:
     def __init__(self):
         pass
@@ -53,8 +61,8 @@ class W4LogReg:
         print("# Tuning hyper-parameters for %s" % "f1")
         print()
 
-        clf = GridSearchCV(sk_lin.LogisticRegression(), tuned_parameters, cv=5,
-                           scoring=make_scorer(w4_evalution.f1_score))
+        clf = GridSearchCV(W4LogisticRegression(), tuned_parameters, cv=5,
+                           scoring=make_scorer(w4_evalution.get_logloss))
         clf.fit(X_train, y_train)
 
         print("Best parameters set found on development set:")
@@ -77,13 +85,15 @@ class W4LogReg:
         # print("hi!!!!")
         y_true, y_pred = y_valid, clf.predict(X_valid)
 
+        print(w4_evalution.get_logloss(y_true, y_pred))
+
         # print(np.sum(y_true > 0))
         # print(np.sum(y_pred > 0))
         # print(y_true, y_pred)
-        print(y_pred)
-        print(np.exp(clf.predict_log_proba(X_valid)))
-
-        print(classification_report(y_true, y_pred))
+        # print(y_pred)
+        # print(np.exp(clf.predict_log_proba(X_valid)))
+        #
+        # print(classification_report(y_true, y_pred))
         # print()
 
 
